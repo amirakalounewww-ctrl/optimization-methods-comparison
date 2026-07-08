@@ -1,0 +1,423 @@
+// ========================================================
+// PHASE 1 : mesh et domaine
+// ========================================================
+
+//declaration de variable 
+real R=1.0;
+int Nelec=8;
+real xc=0.2;
+real yc=0.3;
+real rc=0.3;
+real dTheta=pi/4;
+real delta=pi/16;
+// Le grand cercle découpé en 16 morceaux (8 électrodes, 8 vides)
+border E1(t = -delta, delta)          { x = R*cos(0*dTheta + t); y = R*sin(0*dTheta + t); label = 1; }
+border V1(t = delta, dTheta - delta)  { x = R*cos(0*dTheta + t); y = R*sin(0*dTheta + t); label = 99; }
+
+border E2(t = -delta, delta)          { x = R*cos(1*dTheta + t); y = R*sin(1*dTheta + t); label = 2; }
+border V2(t = delta, dTheta - delta)  { x = R*cos(1*dTheta + t); y = R*sin(1*dTheta + t); label = 99; }
+
+border E3(t = -delta, delta)          { x = R*cos(2*dTheta + t); y = R*sin(2*dTheta + t); label = 3; }
+border V3(t = delta, dTheta - delta)  { x = R*cos(2*dTheta + t); y = R*sin(2*dTheta + t); label = 99; }
+
+border E4(t = -delta, delta)          { x = R*cos(3*dTheta + t); y = R*sin(3*dTheta + t); label = 4; }
+border V4(t = delta, dTheta - delta)  { x = R*cos(3*dTheta + t); y = R*sin(3*dTheta + t); label = 99; }
+
+border E5(t = -delta, delta)          { x = R*cos(4*dTheta + t); y = R*sin(4*dTheta + t); label = 5; }
+border V5(t = delta, dTheta - delta)  { x = R*cos(4*dTheta + t); y = R*sin(4*dTheta + t); label = 99; }
+
+border E6(t = -delta, delta)          { x = R*cos(5*dTheta + t); y = R*sin(5*dTheta + t); label = 6; }
+border V6(t = delta, dTheta - delta)  { x = R*cos(5*dTheta + t); y = R*sin(5*dTheta + t); label = 99; }
+
+border E7(t = -delta, delta)          { x = R*cos(6*dTheta + t); y = R*sin(6*dTheta + t); label = 7; }
+border V7(t = delta, dTheta - delta)  { x = R*cos(6*dTheta + t); y = R*sin(6*dTheta + t); label = 99; }
+
+border E8(t = -delta, delta)          { x = R*cos(7*dTheta + t); y = R*sin(7*dTheta + t); label = 8; }
+border V8(t = delta, dTheta - delta)  { x = R*cos(7*dTheta + t); y = R*sin(7*dTheta + t); label = 99; }
+
+
+border inte(t=0,2*pi)  {x=xc+rc*cos(t); y=yc+rc * sin(t) ; label = 20 ;}
+int N =10 ; // On mettra 20, 40, 80, etc. pour tester la convergence !
+
+mesh Th = buildmesh( E1(N) + V1(N) + E2(N) + V2(N) + E3(N) + V3(N) + E4(N) + V4(N) + 
+                     E5(N) + V5(N) + E6(N) + V6(N) + E7(N) + V7(N) + E8(N) + V8(N) + inte(4*N) );
+fespace Vh0(Th, P0);
+Vh0 sigma = 1.0 + (2.0 - 1.0) * ( (x-xc)^2 + (y-yc)^2 <= rc^2 );
+//plot(Th, wait=true, cmm="Le maillage complet");
+//plot(sigma, fill=true, value=true, wait=true, cmm="La carte des conductivites");
+// ========================================================
+// PHASE 2 : CALCUL DE U_data (SUR UN MAILLAGE TRES FIN )
+// ========================================================
+
+int Nfin = 128; 
+mesh ThFin = buildmesh( E1(Nfin) + V1(Nfin) + E2(Nfin) + V2(Nfin) + E3(Nfin) + V3(Nfin) + E4(Nfin) + V4(Nfin) + 
+                        E5(Nfin) + V5(Nfin) + E6(Nfin) + V6(Nfin) + E7(Nfin) + V7(Nfin) + E8(Nfin) + V8(Nfin) + inte(4*Nfin) );
+//plot(ThFin, wait=true, cmm="Maillage FIN pour generer U_data ");
+
+
+fespace Vh0Fin(ThFin, P1);
+Vh0Fin sigmaFin = 1.0 + (2.0 - 1.0) * ( (x-xc)^2 + (y-yc)^2 <= rc^2 );
+
+
+func real[int] calculUdataFin(real[int] &I) {
+    fespace VhFin(ThFin, P1); // Attention : P1 sur ThFin !
+    VhFin uh, vh;
+
+    real zl = 1.0;
+    real eps = 1e10; 
+    int nbelec = 8;
+
+ 
+    varf vA(uh, vh) = int2d(ThFin)( sigmaFin * (dx(uh)*dx(vh) + dy(uh)*dy(vh)) )
+                    + int1d(ThFin, 1,2,3,4,5,6,7,8)( (1.0/zl) * uh*vh );
+    matrix A = vA(VhFin, VhFin);
+
+    
+    matrix B(nbelec, VhFin.ndof);
+    for(int e=0; e<nbelec; e++) {
+        int labelBord = e + 1;
+        varf vBe(uh, vh) = int1d(ThFin, labelBord)( -(1.0/zl) * vh );
+        real[int] lineB = vBe(0, VhFin);
+        for (int j=0; j<VhFin.ndof; j++) B(e, j) = lineB[j];
+    }
+
+ 
+    real[int] Ddiag(nbelec);
+    for(int e=0; e<nbelec; e++) {
+        int labelBord = e + 1;
+        Ddiag[e] = int1d(ThFin, labelBord)( 1.0 / zl );
+    }
+    Ddiag[0] += eps; 
+    matrix D = Ddiag;
+
+    real[int] F(VhFin.ndof); F = 0.0;
+    real[int] G = I;
+    real[int] Rhs = [ F, G ];
+
+    matrix Mbloc = [ [ A, B' ],
+                     [ B, D  ] ];
+    set(Mbloc, solver=sparsesolver);
+
+    real[int] Sol = Mbloc^-1 * Rhs;
+
+    uh[] = Sol(0 : VhFin.ndof-1);
+    real[int] U = Sol(VhFin.ndof : Sol.n-1);
+    
+    //plot(uh, fill=1, value=1, wait=1, cmm="Champ electrique sur maillage FIN");
+
+    return U;
+}
+
+real[int] Courant = [1.0, -1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0];
+
+real[int] Udata = calculUdataFin(Courant);
+
+cout << " " << endl;
+cout << "=== U_DATA  ===" << endl;
+for(int i=0; i<8; i++){
+    cout << "Electrode " << i+1 << " : " << Udata[i] << " V" << endl;
+}
+// ========================================================
+// PHASE 3 :les fonction EIT_u_U,EIT_adjoint,J_EIT,DJ_EIT
+// ========================================================
+
+Vh0 sigmaInv = 1.0; 
+
+fespace VhInv(Th, P1);
+VhInv usigma, psigma;       
+real[int] Usigma(8), Psigma(8); 
+
+
+fespace Vh0Inv(Th, P0);
+Vh0Inv gradJ;
+
+
+// FONCTION : EIT_u_U(sigma, I)
+func real[int] EITuU(real[int] &I) {
+    VhInv uh, vh;
+    real zl = 1.0; real eps = 1e10; int nbelec = 8;
+
+    varf vA(uh, vh) = int2d(Th)( sigmaInv * (dx(uh)*dx(vh) + dy(uh)*dy(vh)) )
+                    + int1d(Th, 1,2,3,4,5,6,7,8)( (1.0/zl) * uh*vh );
+    matrix A = vA(VhInv, VhInv);
+
+    matrix B(nbelec, VhInv.ndof);
+    for(int e=0; e<nbelec; e++) {
+        varf vBe(uh, vh) = int1d(Th, e+1)( -(1.0/zl) * vh );
+        real[int] lineB = vBe(0, VhInv);
+        for (int j=0; j<VhInv.ndof; j++) B(e, j) = lineB[j];
+    }
+
+    real[int] Ddiag(nbelec);
+    for(int e=0; e<nbelec; e++) Ddiag[e] = int1d(Th, e+1)( 1.0 / zl );
+    Ddiag[0] += eps; matrix D = Ddiag;
+
+    matrix Mbloc = [ [ A, B' ], [ B, D ] ];
+    set(Mbloc, solver=sparsesolver);
+
+    real[int] F(VhInv.ndof); F = 0.0;
+    real[int] Rhs = [ F, I ];
+    real[int] Sol = Mbloc^-1 * Rhs;
+
+    usigma[] = Sol(0 : VhInv.ndof-1);
+    real[int] Uout = Sol(VhInv.ndof : Sol.n-1);
+    return Uout;
+}
+
+
+// FONCTION : EIT_adjoint(sigma, I)
+func int EITadjoint(real[int] &I) { 
+    VhInv uh, vh;
+    real zl = 1.0; real eps = 1e10; int nbelec = 8;
+
+    varf vA(uh, vh) = int2d(Th)( sigmaInv * (dx(uh)*dx(vh) + dy(uh)*dy(vh)) )
+                    + int1d(Th, 1,2,3,4,5,6,7,8)( (1.0/zl) * uh*vh );
+    matrix A = vA(VhInv, VhInv);
+
+    matrix B(nbelec, VhInv.ndof);
+    for(int e=0; e<nbelec; e++) {
+        varf vBe(uh, vh) = int1d(Th, e+1)( -(1.0/zl) * vh );
+        real[int] lineB = vBe(0, VhInv);
+        for (int j=0; j<VhInv.ndof; j++) B(e, j) = lineB[j];
+    }
+
+    real[int] Ddiag(nbelec);
+    for(int e=0; e<nbelec; e++) Ddiag[e] = int1d(Th, e+1)( 1.0 / zl );
+    Ddiag[0] += eps; matrix D = Ddiag;
+
+    matrix Mbloc = [ [ A, B' ], [ B, D ] ];
+    set(Mbloc, solver=sparsesolver);
+
+    real[int] F(VhInv.ndof); F = 0.0;
+    real[int] RhsDir = [ F, I ];
+    real[int] SolDir = Mbloc^-1 * RhsDir;
+
+    usigma[] = SolDir(0 : VhInv.ndof-1);
+    Usigma = SolDir(VhInv.ndof : SolDir.n-1);
+
+    real[int] bBarre(8);
+    for(int i=0; i<8; i++){
+        bBarre[i] = Usigma[i] - Udata[i]; 
+    }
+
+    real[int] RhsAdj = [ F, bBarre ];
+    real[int] SolAdj = Mbloc^-1 * RhsAdj;
+
+    psigma[] = SolAdj(0 : VhInv.ndof-1);
+    Psigma = SolAdj(VhInv.ndof : SolAdj.n-1);
+
+    return 0; 
+}
+
+
+// FONCTION J_EIT 
+
+func real JEIT(real[int] &I, real[int] &UdataCible) {
+    real[int] Uout = EITuU(I);
+    real J = 0.0;
+    for(int i=0; i<8; i++){
+        J = J + 0.5 * (Uout[i] - UdataCible[i])^2;
+    }
+    return J;
+}
+
+// FONCTION DJ_EIT 
+
+func real DJEIT(real[int] &I, real[int] &UdataCible) {
+    int appel = EITadjoint(I); // Remplit usigma et psigma
+    
+    real J = 0.0;
+    for(int i=0; i<8; i++){
+        J = J + 0.5 * (Usigma[i] - UdataCible[i])^2;
+    }
+    
+    // Calcul de DJ (le gradient est mis dans la variable globale)
+    gradJ = - (dx(usigma)*dx(psigma) + dy(usigma)*dy(psigma));
+    
+    return J; 
+}
+
+// ========================================================
+// LE TEST VALIDATION DU GRADIENT (Correction)
+// ========================================================
+/*
+cout << " " << endl;
+cout << "=== TEST DE TAYLOR (Validation de l'Adjoint) ===" << endl;
+
+sigmaInv = 1.0; // Point de départ (sigma = 1 partout)
+real J0 = DJEIT(Courant, Udata); 
+
+Vh0Inv phi = (x>0.0 && x<0.4 && y>0.0 && y<0.4); 
+
+real DerivDirectionnelle = int2d(Th)( gradJ * phi );
+cout << "Derivee directionnelle calculee = " << DerivDirectionnelle << endl;
+
+real lambda = 0.1;
+real erreurPrecedente = 0.0; // Pour stocker l'erreur de l'itération précédente
+real normDeriv = abs(DerivDirectionnelle);
+cout << " Lambda      | Diff Finie      | Erreur(lambda)  | Ratio " << endl;
+cout << "------------------------------------------------------------------------" << endl;
+
+// On peut faire plus d'itérations puisque lambda descend moins vite (division par 2)
+for(int k=1; k<=10; k++){
+    
+    sigmaInv = 1.0 + lambda * phi; 
+    real Jpert = JEIT(Courant, Udata); 
+    real DiffFinie = (Jpert - J0) / lambda;
+    
+
+    
+    // 2. Calcul de l'erreur absolue | DiffFinie - Derivée Exacte |
+    real erreur = abs(DiffFinie - DerivDirectionnelle);
+    real erreurRelative = abs(DiffFinie - DerivDirectionnelle) / normDeriv; // <-- ON DIVISE ICI
+    // 3. Calcul du ratio (à partir de la 2ème itération)
+    real ratio = 0.0;
+    if(k > 1) {
+        ratio = erreurPrecedente / erreur;
+    }
+    
+    // Affichage des résultats
+    cout << " " << lambda << " | " << DiffFinie << " | " << erreur << " | " << ratio << endl;
+    
+    // 4. Mise à jour pour le tour suivant
+    erreurPrecedente = erreur;
+    lambda = lambda / 2.0; // Le prof demande /2 et non /10
+}
+
+sigmaInv = 1.0; // Restauration
+cout << "\n=== TEST DE TAYLOR (Difference Centree) ===" << endl;
+lambda = 0.1;
+erreurPrecedente = 0.0;
+
+cout << " Lambda      | Diff Centree    | Erreur(lambda)  | Ratio (doit tendre vers 4)" << endl;
+cout << "------------------------------------------------------------------------" << endl;
+
+for(int k=1; k<=10; k++){
+    // J(sigma + lambda * phi)
+    sigmaInv = 1.0 + lambda * phi; 
+    real Jplus = JEIT(Courant, Udata); 
+    
+    // J(sigma - lambda * phi)
+    sigmaInv = 1.0 - lambda * phi; 
+    real Jmoins = JEIT(Courant, Udata); 
+    
+    // Différence centrée
+    real DiffCentree = (Jplus - Jmoins) / (2.0 * lambda);
+    real erreurRelativeCentree = abs(DiffCentree - DerivDirectionnelle) / normDeriv; // <-- ET ICI
+    real erreur = abs(DiffCentree - DerivDirectionnelle);
+    
+    real ratio = 0.0;
+    if(k > 1) { ratio = erreurPrecedente / erreur; }
+    
+    cout << " " << lambda << " | " << DiffCentree << " | " << erreur << " | " << ratio << endl;
+    
+    erreurPrecedente = erreur;
+    lambda = lambda / 2.0;
+}
+sigmaInv = 1.0;
+// ========================================================
+// PHASE 2.5 : ETUDE DE CONVERGENCE DU MAILLAGE (Demande du Prof)
+// ========================================================
+cout << "\n=== ETUDE DE CONVERGENCE DU MAILLAGE ===" << endl;
+cout << "Reference U_data calculee avec Nfin = " << Nfin << endl;
+cout << "--------------------------------------------------------" << endl;
+cout << "   N   |   Erreur ||U_h - U_data|| " << endl;
+cout << "--------------------------------------------------------" << endl;
+
+// Tableau des N que l'on veut tester (du plus grossier au plus fin)
+int[int] tabN = [1,2,4,8,16, 32, 64, 128]; 
+
+for(int k=0; k<tabN.n; k++){
+    int Ntest = tabN[k];
+    
+    // 1. On reconstruit le maillage pour ce N spécifique
+    mesh ThTest = buildmesh( E1(Ntest) + V1(Ntest) + E2(Ntest) + V2(Ntest) + 
+                             E3(Ntest) + V3(Ntest) + E4(Ntest) + V4(Ntest) + 
+                             E5(Ntest) + V5(Ntest) + E6(Ntest) + V6(Ntest) + 
+                             E7(Ntest) + V7(Ntest) + E8(Ntest) + V8(Ntest) + 
+                             inte(4*Ntest) );
+                             
+    // 2. On definit les espaces et la conductivité sur ce maillage
+    fespace Vh0Test(ThTest, P0);
+    Vh0Test sigmaTest = 1.0 + (2.0 - 1.0) * ( (x-xc)^2 + (y-yc)^2 <= rc^2 );
+    
+    fespace VhTest(ThTest, P1);
+    VhTest uh, vh;
+    
+    // 3. On reconstruit les matrices A, B, D pour ce maillage (comme dans EITuU)
+    real zl = 1.0; real eps = 1e10; int nbelec = 8;
+    varf vA(uh, vh) = int2d(ThTest)( sigmaTest * (dx(uh)*dx(vh) + dy(uh)*dy(vh)) )
+                    + int1d(ThTest, 1,2,3,4,5,6,7,8)( (1.0/zl) * uh*vh );
+    matrix Atest = vA(VhTest, VhTest);
+
+    matrix Btest(nbelec, VhTest.ndof);
+    for(int e=0; e<nbelec; e++) {
+        varf vBe(uh, vh) = int1d(ThTest, e+1)( -(1.0/zl) * vh );
+        real[int] lineB = vBe(0, VhTest);
+        for (int j=0; j<VhTest.ndof; j++) Btest(e, j) = lineB[j];
+    }
+
+    real[int] Ddiag(nbelec);
+    for(int e=0; e<nbelec; e++) Ddiag[e] = int1d(ThTest, e+1)( 1.0 / zl );
+    Ddiag[0] += eps; matrix Dtest = Ddiag;
+
+    matrix Mbloc = [ [ Atest, Btest' ], [ Btest, Dtest ] ];
+    set(Mbloc, solver=sparsesolver);
+
+    real[int] Ftest(VhTest.ndof); Ftest = 0.0;
+    real[int] Rhs = [ Ftest, Courant ];
+    real[int] Sol = Mbloc^-1 * Rhs;
+
+    // 4. On extrait U_h pour ce maillage
+    real[int] Uh = Sol(VhTest.ndof : Sol.n-1);
+    
+    // 5. On calcule l'erreur par rapport à U_data (la norme Euclidienne)
+    real erreurMaillage = 0.0;
+    for(int i=0; i<8; i++){
+        erreurMaillage += (Uh[i] - Udata[i])^2;
+    }
+    erreurMaillage = sqrt(erreurMaillage); // Norme L2 discrète
+    
+    // 6. On affiche le résultat
+    cout << "  " << Ntest << "   |   " << erreurMaillage << endl;
+}
+cout << "--------------------------------------------------------" << endl;
+*/
+// ========================================================
+// PHASE 4 : RECONSTRUCTION PAR DESCENTE DE GRADIENT (Pas Fixe)
+// ========================================================
+cout << "\n=== DEBUT DE L'OPTIMISATION ===" << endl;
+
+sigmaInv = 1.0;           
+real lambda = 0.1;        
+int iterMax = 100;        
+
+// 1. Tableaux pour afficher la courbe dans FreeFem++
+real[int] tabIter(iterMax);
+real[int] tabLogJ(iterMax);
+
+// 2. Fichier pour faire un beau graphique dans Excel
+ofstream fichierDonnees("convergence.csv");
+fichierDonnees << "Iteration,Erreur_J" << endl;
+
+for(int iter = 1; iter <= iterMax; iter++){
+    
+    real Jactuel = DJEIT(Courant, Udata); 
+    cout << "Iteration " << iter << " | J = " << Jactuel << endl;
+    
+    // Sauvegarde pour Excel
+    fichierDonnees << iter << "," << Jactuel << endl;
+    
+    // Sauvegarde pour FreeFem++ (On utilise log10 pour voir la droite)
+    tabIter[iter-1] = iter;
+    tabLogJ[iter-1] = log10(Jactuel);
+    
+    // Mise à jour de l'image
+    sigmaInv = sigmaInv - lambda * gradJ;
+    plot(sigmaInv, fill=true, value=true, wait=false, cmm="Reconstruction Iteration "+iter);
+}
+
+cout << "Fin ! Les donnees sont dans le fichier 'convergence.csv' (Dossier Telechargements)." << endl;
+
+// Affichage de la courbe directement dans FreeFem++ à la fin
+plot([tabIter, tabLogJ], wait=true, cmm="Courbe de convergence (Log10 J)");
